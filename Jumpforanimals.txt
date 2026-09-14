@@ -1,3 +1,5 @@
+-- [[ LENNON HUB - 60 STUDS OFFSET EDITION ]] --
+
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -267,7 +269,7 @@ end
 -- 4. Main UI Setup
 --------------------------------------------------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "FirandaHubPro"
+ScreenGui.Name = "LennonHubPro"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -570,7 +572,7 @@ FarmTitle.BackgroundTransparency = 1
 FarmTitle.Parent = FarmToggleFrame
 
 local FarmSubText = Instance.new("TextLabel")
-FarmSubText.Text = "Auto Farm Jump Power"
+FarmSubText.Text = "TP to SquatZone.Floor & Auto Click Detector"
 FarmSubText.Font = Enum.Font.Gotham
 FarmSubText.TextSize = 9
 FarmSubText.TextColor3 = Color3.fromRGB(110, 120, 140)
@@ -610,7 +612,7 @@ local ManualTPBtnCorner = Instance.new("UICorner") ManualTPBtnCorner.CornerRadiu
 local ManualTPBtn = Instance.new("TextButton")
 ManualTPBtn.Size = UDim2.new(1, 0, 1, 0)
 ManualTPBtn.BackgroundTransparency = 1
-ManualTPBtn.Text = "Teleport to Plots"
+ManualTPBtn.Text = "Teleport to My Squat Floor 🏠"
 ManualTPBtn.Font = Enum.Font.GothamBold
 ManualTPBtn.TextColor3 = Color3.fromRGB(16, 185, 129)
 ManualTPBtn.TextSize = 12
@@ -618,9 +620,9 @@ ManualTPBtn.Parent = ManualTPBtnFrame
 
 ManualTPBtn.MouseButton1Click:Connect(function()
 	local success = findMyPlotAndTeleport()
-	ManualTPBtn.Text = success and "Teleported!" or "Plot Not Found! ✕"
+	ManualTPBtn.Text = success and "Teleported! ✅" or "Plot Not Found! ✕"
 	task.wait(1.5)
-	ManualTPBtn.Text = "Teleport to Plots"
+	ManualTPBtn.Text = "Teleport to My Squat Floor 🏠"
 end)
 
 --------------------------------------------------------------------------------
@@ -684,9 +686,9 @@ local function createSettingInput(titleText, defaultVal, callback)
 	end)
 end
 
-createSettingInput("WalkSpeed", Config.WalkSpeed, function(val) Config.WalkSpeed = val end)
-createSettingInput("JumpPower", Config.JumpPower, function(val) Config.JumpPower = val end)
-createSettingInput("Tween Speed", Config.TweenSpeed, function(val) Config.TweenSpeed = val end)
+createSettingInput("WalkSpeed (ความเร็วเดิน)", Config.WalkSpeed, function(val) Config.WalkSpeed = val end)
+createSettingInput("JumpPower (กระโดดสูง)", Config.JumpPower, function(val) Config.JumpPower = val end)
+createSettingInput("Tween Speed (ความเร็วบิน)", Config.TweenSpeed, function(val) Config.TweenSpeed = val end)
 
 local TPBtnFrame = Instance.new("Frame")
 TPBtnFrame.Size = UDim2.new(1, -28, 0, 42)
@@ -697,7 +699,7 @@ local TPBtnCorner = Instance.new("UICorner") TPBtnCorner.CornerRadius = UDim.new
 local TPBtn = Instance.new("TextButton")
 TPBtn.Size = UDim2.new(1, 0, 1, 0)
 TPBtn.BackgroundTransparency = 1
-TPBtn.Text = "Get Teleport Tool"
+TPBtn.Text = "Get Teleport Tool 📍"
 TPBtn.Font = Enum.Font.GothamBold
 TPBtn.TextColor3 = Color3.fromRGB(99, 102, 241)
 TPBtn.TextSize = 12
@@ -705,9 +707,9 @@ TPBtn.Parent = TPBtnFrame
 
 TPBtn.MouseButton1Click:Connect(function()
 	giveTPTool()
-	TPBtn.Text = "Tool Give"
+	TPBtn.Text = "Tool Given! ✅"
 	task.wait(1)
-	TPBtn.Text = "Get Teleport Tool"
+	TPBtn.Text = "Get Teleport Tool 📍"
 end)
 
 SettingsPage.CanvasSize = UDim2.new(0, 0, 0, 210)
@@ -991,571 +993,5 @@ RunService.RenderStepped:Connect(function()
 				end
 			end
 		end
-	end
-end)
-	local nearestGuardian = getNearestGuardian()
-	local startPart = getStartTarget()
-	local character = LocalPlayer.Character
-
-	if not nearestGuardian or not startPart or not character then return end
-
-	local myHRP = character:FindFirstChild("HumanoidRootPart")
-	local gPart = nearestGuardian:IsA("Model") and (nearestGuardian.PrimaryPart or nearestGuardian:FindFirstChild("HumanoidRootPart") or nearestGuardian:FindFirstChildWhichIsA("BasePart")) or nearestGuardian
-
-	if not myHRP or not gPart then return end
-
-	-- ปรับตำแหน่งการวางให้ตัว Guardian และ ตัวเราตั้งตรง ไม่เอียง
-	local currentGPos = gPart.Position
-	local uprightGCFrame = CFrame.lookAt(currentGPos, currentGPos + gPart.CFrame.LookVector * Vector3.new(1, 0, 1), Vector3.new(0, 1, 0))
-	
-	if nearestGuardian:IsA("Model") then
-		nearestGuardian:PivotTo(uprightGCFrame)
-	else
-		gPart.CFrame = uprightGCFrame
-	end
-
-	-- ย้ายตัวเราขึ้นไปบนหลัง Guardian ในท่าตั้งตรง
-	character:PivotTo(uprightGCFrame * CFrame.new(0, 3, 1))
-
-	local weld = Instance.new("WeldConstraint")
-	weld.Part0 = myHRP
-	weld.Part1 = gPart
-	weld.Parent = myHRP
-
-	-- กำหนด CFrame เป้าหมายไปที่ Workspace.Map.Start
-	local targetPos = startPart.Position + Vector3.new(0, 3, 0)
-	local targetCFrame = CFrame.lookAt(targetPos, targetPos + uprightGCFrame.LookVector, Vector3.new(0, 1, 0))
-
-	local distance = (gPart.Position - targetPos).Magnitude
-	local speed = 1000
-	local tweenTime = math.max(distance / speed, 0.05)
-
-	if nearestGuardian:IsA("Model") and not nearestGuardian.PrimaryPart then
-		nearestGuardian.PrimaryPart = gPart
-	end
-
-	local tweenInfo = TweenInfo.new(tweenTime, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
-	local cframeValue = Instance.new("CFrameValue")
-	cframeValue.Value = nearestGuardian:IsA("Model") and nearestGuardian:GetPivot() or gPart.CFrame
-
-	local tween = TweenService:Create(cframeValue, tweenInfo, {Value = targetCFrame})
-
-	local connection
-	connection = cframeValue.Changed:Connect(function(newCFrame)
-		if nearestGuardian:IsA("Model") then
-			nearestGuardian:PivotTo(newCFrame)
-		else
-			gPart.CFrame = newCFrame
-		end
-	end)
-
-	tween:Play()
-	tween.Completed:Wait()
-
-	connection:Disconnect()
-	cframeValue:Destroy()
-
-	-- ถอด Weld และตั้งตัวเราให้ยืนตรงบนจุด Start
-	task.wait(0.1)
-	weld:Destroy()
-	character:PivotTo(CFrame.lookAt(targetPos, targetPos + character.HumanoidRootPart.CFrame.LookVector * Vector3.new(1, 0, 1), Vector3.new(0, 1, 0)))
-end
-
---------------------------------------------------------------------------------
--- 4. UI Setup & Elements
---------------------------------------------------------------------------------
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "LennonHubPro"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-local MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 340, 0, 260)
-MainFrame.Position = UDim2.new(0.5, -170, 0.4, -130)
-MainFrame.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.ClipsDescendants = false
-MainFrame.Parent = ScreenGui
-
-local MainUICorner = Instance.new("UICorner")
-MainUICorner.CornerRadius = UDim.new(0, 16)
-MainUICorner.Parent = MainFrame
-
-local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(45, 50, 65)
-MainStroke.Thickness = 1.5
-MainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-MainStroke.Parent = MainFrame
-
--- Dragging System
-local dragging, dragInput, dragStart, startPos
-local function updateDrag(input)
-	local delta = input.Position - dragStart
-	MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-end
-
-MainFrame.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = true
-		dragStart = input.Position
-		startPos = MainFrame.Position
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then dragging = false end
-		end)
-	end
-end)
-
-MainFrame.InputChanged:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if input == dragInput and dragging then updateDrag(input) end
-end)
-
--- Header Bar
-local Header = Instance.new("Frame")
-Header.Size = UDim2.new(1, 0, 0, 48)
-Header.BackgroundTransparency = 1
-Header.Parent = MainFrame
-
-local Title = Instance.new("TextLabel")
-Title.Text = "FIRANDA HUB"
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 15
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Position = UDim2.new(0, 18, 0, 10)
-Title.Size = UDim2.new(0, 150, 0, 16)
-Title.BackgroundTransparency = 1
-Title.Parent = Header
-
-local SubTitle = Instance.new("TextLabel")
-SubTitle.Text = "AUTO STEAL EGG"
-SubTitle.Font = Enum.Font.GothamMedium
-SubTitle.TextSize = 10
-SubTitle.TextColor3 = Color3.fromRGB(130, 140, 160)
-SubTitle.TextXAlignment = Enum.TextXAlignment.Left
-SubTitle.Position = UDim2.new(0, 18, 0, 26)
-SubTitle.Size = UDim2.new(0, 150, 0, 14)
-SubTitle.BackgroundTransparency = 1
-SubTitle.Parent = Header
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 26, 0, 26)
-CloseBtn.Position = UDim2.new(1, -38, 0, 11)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
-CloseBtn.Text = "✕"
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextColor3 = Color3.fromRGB(150, 160, 180)
-CloseBtn.TextSize = 12
-CloseBtn.Parent = Header
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 8)
-CloseCorner.Parent = CloseBtn
-
--- Viewport & Dropdown Container
-local Card = Instance.new("Frame")
-Card.Name = "Card"
-Card.Size = UDim2.new(1, -36, 0, 86)
-Card.Position = UDim2.new(0, 18, 0, 54)
-Card.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
-Card.Parent = MainFrame
-
-local CardCorner = Instance.new("UICorner")
-CardCorner.CornerRadius = UDim.new(0, 12)
-CardCorner.Parent = Card
-
-local ViewportBg = Instance.new("Frame")
-ViewportBg.Size = UDim2.new(0, 68, 0, 68)
-ViewportBg.Position = UDim2.new(0, 9, 0, 9)
-ViewportBg.BackgroundColor3 = Color3.fromRGB(16, 18, 25)
-ViewportBg.Parent = Card
-
-local ViewportBgCorner = Instance.new("UICorner")
-ViewportBgCorner.CornerRadius = UDim.new(0, 10)
-ViewportBgCorner.Parent = ViewportBg
-
-local ViewportFrame = Instance.new("ViewportFrame")
-ViewportFrame.Size = UDim2.new(1, 0, 1, 0)
-ViewportFrame.BackgroundTransparency = 1
-ViewportFrame.Parent = ViewportBg
-
-local ViewportCamera = Instance.new("Camera")
-ViewportFrame.CurrentCamera = ViewportCamera
-ViewportCamera.Parent = ViewportFrame
-
-local DropdownBtn = Instance.new("TextButton")
-DropdownBtn.Size = UDim2.new(1, -95, 0, 68)
-DropdownBtn.Position = UDim2.new(0, 86, 0, 9)
-DropdownBtn.BackgroundTransparency = 1
-DropdownBtn.Text = ""
-DropdownBtn.Parent = Card
-
-local DropdownTag = Instance.new("TextLabel")
-DropdownTag.Text = "SELECT EGG"
-DropdownTag.Font = Enum.Font.GothamBold
-DropdownTag.TextSize = 9
-DropdownTag.TextColor3 = Color3.fromRGB(100, 110, 130)
-DropdownTag.TextXAlignment = Enum.TextXAlignment.Left
-DropdownTag.Position = UDim2.new(0, 0, 0, 14)
-DropdownTag.Size = UDim2.new(1, -30, 0, 12)
-DropdownTag.BackgroundTransparency = 1
-DropdownTag.Parent = DropdownBtn
-
-local SelectedText = Instance.new("TextLabel")
-SelectedText.Text = "Choose target egg..."
-SelectedText.Font = Enum.Font.GothamBold
-SelectedText.TextSize = 13
-SelectedText.TextColor3 = Color3.fromRGB(255, 255, 255)
-SelectedText.TextXAlignment = Enum.TextXAlignment.Left
-SelectedText.Position = UDim2.new(0, 0, 0, 30)
-SelectedText.Size = UDim2.new(1, -30, 0, 20)
-SelectedText.BackgroundTransparency = 1
-SelectedText.Parent = DropdownBtn
-
-local Arrow = Instance.new("TextLabel")
-Arrow.Text = "▼"
-Arrow.Font = Enum.Font.GothamBold
-Arrow.TextSize = 10
-Arrow.TextColor3 = Color3.fromRGB(140, 150, 170)
-Arrow.Position = UDim2.new(1, -20, 0, 26)
-Arrow.Size = UDim2.new(0, 16, 0, 16)
-Arrow.BackgroundTransparency = 1
-Arrow.Parent = DropdownBtn
-
-local DropdownList = Instance.new("ScrollingFrame")
-DropdownList.Size = UDim2.new(1, 0, 0, 140)
-DropdownList.Position = UDim2.new(0, 0, 1, 6)
-DropdownList.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
-DropdownList.BorderSizePixel = 0
-DropdownList.Visible = false
-DropdownList.ZIndex = 20
-DropdownList.ScrollBarThickness = 3
-DropdownList.ScrollBarImageColor3 = Color3.fromRGB(60, 70, 90)
-DropdownList.Parent = Card
-
-local ListCorner = Instance.new("UICorner")
-ListCorner.CornerRadius = UDim.new(0, 10)
-ListCorner.Parent = DropdownList
-
-local UIListLayout = Instance.new("UIListLayout")
-UIListLayout.Padding = UDim.new(0, 4)
-UIListLayout.Parent = DropdownList
-
---------------------------------------------------------------------------------
--- 5. Main Toggle Control
---------------------------------------------------------------------------------
-local ToggleFrame = Instance.new("Frame")
-ToggleFrame.Size = UDim2.new(1, -36, 0, 54)
-ToggleFrame.Position = UDim2.new(0, 18, 0, 154)
-ToggleFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
-ToggleFrame.Parent = MainFrame
-
-local ToggleCorner = Instance.new("UICorner")
-ToggleCorner.CornerRadius = UDim.new(0, 12)
-ToggleCorner.Parent = ToggleFrame
-
-local ToggleTitle = Instance.new("TextLabel")
-ToggleTitle.Text = "AUTO STEAL EGG"
-ToggleTitle.Font = Enum.Font.GothamBold
-ToggleTitle.TextSize = 12
-ToggleTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleTitle.TextXAlignment = Enum.TextXAlignment.Left
-ToggleTitle.Position = UDim2.new(0, 14, 0, 10)
-ToggleTitle.Size = UDim2.new(0, 180, 0, 16)
-ToggleTitle.BackgroundTransparency = 1
-ToggleTitle.Parent = ToggleFrame
-
-local ToggleSubText = Instance.new("TextLabel")
-ToggleSubText.Text = "Steal egg & return to Start"
-ToggleSubText.Font = Enum.Font.Gotham
-ToggleSubText.TextSize = 9
-ToggleSubText.TextColor3 = Color3.fromRGB(110, 120, 140)
-ToggleSubText.TextXAlignment = Enum.TextXAlignment.Left
-ToggleSubText.Position = UDim2.new(0, 14, 0, 27)
-ToggleSubText.Size = UDim2.new(0, 180, 0, 14)
-ToggleSubText.BackgroundTransparency = 1
-ToggleSubText.Parent = ToggleFrame
-
-local SwitchBg = Instance.new("Frame")
-SwitchBg.Size = UDim2.new(0, 50, 0, 26)
-SwitchBg.Position = UDim2.new(1, -64, 0, 14)
-SwitchBg.BackgroundColor3 = Color3.fromRGB(35, 40, 52)
-SwitchBg.Parent = ToggleFrame
-
-local SwitchCorner = Instance.new("UICorner")
-SwitchCorner.CornerRadius = UDim.new(1, 0)
-SwitchCorner.Parent = SwitchBg
-
-local SwitchKnob = Instance.new("Frame")
-SwitchKnob.Size = UDim2.new(0, 20, 0, 20)
-SwitchKnob.Position = UDim2.new(0, 3, 0.5, -10)
-SwitchKnob.BackgroundColor3 = Color3.fromRGB(180, 190, 210)
-SwitchKnob.Parent = SwitchBg
-
-local KnobCorner = Instance.new("UICorner")
-KnobCorner.CornerRadius = UDim.new(1, 0)
-KnobCorner.Parent = SwitchKnob
-
-local SwitchBtn = Instance.new("TextButton")
-SwitchBtn.Size = UDim2.new(1, 0, 1, 0)
-SwitchBtn.BackgroundTransparency = 1
-SwitchBtn.Text = ""
-SwitchBtn.Parent = SwitchBg
-
---------------------------------------------------------------------------------
--- 6. Open UI Floating Button & Animations
---------------------------------------------------------------------------------
-local OpenBtn = Instance.new("TextButton")
-OpenBtn.Name = "OpenUIBtn"
-OpenBtn.Size = UDim2.new(0, 95, 0, 34)
-OpenBtn.Position = UDim2.new(0, 20, 0.5, -17)
-OpenBtn.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
-OpenBtn.Text = "Firanda Hub"
-OpenBtn.Font = Enum.Font.GothamBold
-OpenBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-OpenBtn.TextSize = 12
-OpenBtn.Parent = ScreenGui
-
-local OpenCorner = Instance.new("UICorner")
-OpenCorner.CornerRadius = UDim.new(0, 10)
-OpenCorner.Parent = OpenBtn
-
-local function toggleUIWindow(show)
-	if show then
-		MainFrame.Visible = true
-		MainFrame.Size = UDim2.new(0, 300, 0, 220)
-		TweenService:Create(MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-			Size = UDim2.new(0, 340, 0, 260)
-		}):Play()
-	else
-		local tween = TweenService:Create(MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-			Size = UDim2.new(0, 300, 0, 220)
-		})
-		tween:Play()
-		tween.Completed:Connect(function()
-			if not MainFrame.Visible then return end
-			MainFrame.Visible = false
-			MainFrame.Size = UDim2.new(0, 340, 0, 260)
-		end)
-	end
-end
-
-OpenBtn.MouseButton1Click:Connect(function() toggleUIWindow(not MainFrame.Visible) end)
-CloseBtn.MouseButton1Click:Connect(function() toggleUIWindow(false) end)
-
---------------------------------------------------------------------------------
--- 7. Real-Time Viewport & Dynamic Stages/SpawnedEggs Dropdown
---------------------------------------------------------------------------------
-local selectedTargetObj = nil
-local selectedModelName = nil
-local currentViewportModel = nil
-local listViewportModels = {}
-
-local function setViewportModel(model)
-	task.spawn(function()
-		if currentViewportModel then currentViewportModel:Destroy() currentViewportModel = nil end
-		if not model then return end
-
-		local clone = model:Clone()
-		pcall(function() ContentProvider:PreloadAsync({clone}) end)
-
-		clone.Parent = ViewportFrame
-		currentViewportModel = clone
-
-		local primary = clone:IsA("Model") and (clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart")) or clone
-		if primary then
-			local cframe, size
-			if clone:IsA("Model") then
-				cframe, size = clone:GetBoundingBox()
-			else
-				cframe = clone.CFrame
-				size = clone.Size
-			end
-			local maxDim = math.max(size.X, size.Y, size.Z)
-			ViewportCamera.CFrame = CFrame.new(cframe.Position + Vector3.new(0, maxDim * 0.25, maxDim * 1.7), cframe.Position)
-		end
-	end)
-end
-
-RunService.RenderStepped:Connect(function(dt)
-	if MainFrame.Visible then
-		if currentViewportModel then
-			local cframe = currentViewportModel:IsA("Model") and currentViewportModel:GetBoundingBox() or currentViewportModel.CFrame
-			if currentViewportModel:IsA("Model") then
-				currentViewportModel:PivotTo(cframe * CFrame.Angles(0, math.rad(40 * dt), 0))
-			end
-		end
-
-		if DropdownList.Visible then
-			for _, itemData in ipairs(listViewportModels) do
-				if itemData.model and itemData.model:IsA("Model") then
-					local cframe, _ = itemData.model:GetBoundingBox()
-					itemData.model:PivotTo(cframe * CFrame.Angles(0, math.rad(40 * dt), 0))
-				end
-			end
-		end
-	end
-end)
-
--- ฟังก์ชันดึง Egg ทั้งหมดจาก Workspace.Map.Stages -> [Stage Model] -> SpawnedEggs
-local function refreshEggsFromStages()
-	listViewportModels = {}
-	for _, child in ipairs(DropdownList:GetChildren()) do
-		if child:IsA("TextButton") then child:Destroy() end
-	end
-
-	local mapFolder = Workspace:FindFirstChild("Map")
-	local stagesFolder = mapFolder and mapFolder:FindFirstChild("Stages") or Workspace:FindFirstChild("Stages")
-	if not stagesFolder then return end
-
-	local count = 0
-
-	-- ลูปตรวจค้นหาในโฟลเดอร์ Stages
-	for _, stage in ipairs(stagesFolder:GetChildren()) do
-		local spawnedEggsFolder = stage:FindFirstChild("SpawnedEggs")
-		if spawnedEggsFolder then
-			for _, egg in ipairs(spawnedEggsFolder:GetChildren()) do
-				count = count + 1
-
-				local itemBtn = Instance.new("TextButton")
-				itemBtn.Size = UDim2.new(1, 0, 0, 36)
-				itemBtn.BackgroundColor3 = Color3.fromRGB(28, 32, 45)
-				itemBtn.BackgroundTransparency = 0.5
-				itemBtn.Text = ""
-				itemBtn.ZIndex = 21
-				itemBtn.Parent = DropdownList
-
-				local itemCorner = Instance.new("UICorner")
-				itemCorner.CornerRadius = UDim.new(0, 6)
-				itemCorner.Parent = itemBtn
-
-				local listViewportBg = Instance.new("Frame")
-				listViewportBg.Size = UDim2.new(0, 30, 0, 30)
-				listViewportBg.Position = UDim2.new(0, 4, 0.5, -15)
-				listViewportBg.BackgroundColor3 = Color3.fromRGB(16, 18, 25)
-				listViewportBg.ZIndex = 22
-				listViewportBg.Parent = itemBtn
-
-				local listViewportBgCorner = Instance.new("UICorner")
-				listViewportBgCorner.CornerRadius = UDim.new(0, 6)
-				listViewportBgCorner.Parent = listViewportBg
-
-				local listViewport = Instance.new("ViewportFrame")
-				listViewport.Size = UDim2.new(1, 0, 1, 0)
-				listViewport.BackgroundTransparency = 1
-				listViewport.ZIndex = 23
-				listViewport.Parent = listViewportBg
-
-				local listCamera = Instance.new("Camera")
-				listViewport.CurrentCamera = listCamera
-				listCamera.Parent = listViewport
-
-				task.spawn(function()
-					local listClone = egg:Clone()
-					listClone.Parent = listViewport
-
-					local primary = listClone:IsA("Model") and (listClone.PrimaryPart or listClone:FindFirstChildWhichIsA("BasePart")) or listClone
-					if primary then
-						local cframe, size
-						if listClone:IsA("Model") then
-							cframe, size = listClone:GetBoundingBox()
-						else
-							cframe = listClone.CFrame
-							size = listClone.Size
-						end
-						local maxDim = math.max(size.X, size.Y, size.Z)
-						listCamera.CFrame = CFrame.new(cframe.Position + Vector3.new(0, maxDim * 0.25, maxDim * 1.7), cframe.Position)
-					end
-					table.insert(listViewportModels, {model = listClone, camera = listCamera})
-				end)
-
-				local itemLabel = Instance.new("TextLabel")
-				itemLabel.Text = stage.Name .. " - " .. egg.Name
-				itemLabel.Font = Enum.Font.GothamMedium
-				itemLabel.TextColor3 = Color3.fromRGB(190, 200, 220)
-				itemLabel.TextSize = 11
-				itemLabel.TextXAlignment = Enum.TextXAlignment.Left
-				itemLabel.Position = UDim2.new(0, 42, 0, 0)
-				itemLabel.Size = UDim2.new(1, -42, 1, 0)
-				itemLabel.BackgroundTransparency = 1
-				itemLabel.ZIndex = 22
-				itemLabel.Parent = itemBtn
-
-				itemBtn.MouseButton1Click:Connect(function()
-					selectedTargetObj = egg
-					selectedModelName = egg.Name
-					SelectedText.Text = egg.Name
-					setViewportModel(egg)
-					DropdownList.Visible = false
-					Arrow.Text = "▼"
-				end)
-			end
-		end
-	end
-	DropdownList.CanvasSize = UDim2.new(0, 0, 0, count * 40)
-end
-
-DropdownBtn.MouseButton1Click:Connect(function()
-	DropdownList.Visible = not DropdownList.Visible
-	Arrow.Text = DropdownList.Visible and "▲" or "▼"
-	if DropdownList.Visible then refreshEggsFromStages() end
-end)
-
---------------------------------------------------------------------------------
--- 8. Integrated Main Steal & Ride Loop
---------------------------------------------------------------------------------
-local isSystemActive = false
-
-local function triggerPrompt(prompt)
-	if fireproximityprompt then
-		fireproximityprompt(prompt)
-	elseif prompt:FindFirstChild("InputHoldBegan") then
-		prompt:InputHoldBegan()
-		task.wait(prompt.HoldDuration or 0.1)
-		prompt:InputHoldEnd()
-	end
-end
-
-SwitchBtn.MouseButton1Click:Connect(function()
-	isSystemActive = not isSystemActive
-
-	if isSystemActive then
-		TweenService:Create(SwitchBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(16, 185, 129)}):Play()
-		TweenService:Create(SwitchKnob, TweenInfo.new(0.2), {Position = UDim2.new(1, -23, 0.5, -10), BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
-
-		task.spawn(function()
-			while isSystemActive do
-				if selectedTargetObj and selectedTargetObj.Parent then
-					local character = LocalPlayer.Character
-					if character then
-						local targetPart = selectedTargetObj:IsA("Model") and (selectedTargetObj.PrimaryPart or selectedTargetObj:FindFirstChildWhichIsA("BasePart")) or selectedTargetObj
-						if targetPart then
-							-- Step 1: วาร์ปตัวเราไปหา Egg ที่เลือก ยืนตรง
-							local currentStealPos = targetPart.Position + Vector3.new(0, 2, 3)
-							character:PivotTo(CFrame.lookAt(currentStealPos, targetPart.Position, Vector3.new(0, 1, 0)))
-							task.wait(0.25)
-
-							-- Step 2: กด ProximityPrompt Steal
-							local prompt = selectedTargetObj:FindFirstChildWhichIsA("ProximityPrompt", true) or targetPart:FindFirstChildWhichIsA("ProximityPrompt", true)
-							if prompt then triggerPrompt(prompt) end
-
-							task.wait(0.25)
-
-							-- Step 3: ขี่ Guardian ยืนตัวตรง Tween ไป Workspace.Map.Start ความเร็ว 1000
-							rideAndTweenGuardianToStart()
-						end
-					end
-				end
-				task.wait(1.2)
-			end
-		end)
-	else
-		TweenService:Create(SwitchBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 40, 52)}):Play()
-		TweenService:Create(SwitchKnob, TweenInfo.new(0.2), {Position = UDim2.new(0, 3, 0.5, -10), BackgroundColor3 = Color3.fromRGB(180, 190, 210)}):Play()
 	end
 end)
