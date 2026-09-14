@@ -1,9 +1,10 @@
-Players = game:GetService("Players")
+local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local ContentProvider = game:GetService("ContentProvider")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -13,59 +14,985 @@ if LocalPlayer.PlayerGui:FindFirstChild("LennonHubPro") then
 end
 
 --------------------------------------------------------------------------------
--- 1. ฟังก์ชันค้นหาจุด Start (ปลายทางสำหรับ Tween กลับ)
+-- 0. Anti-AFK System
 --------------------------------------------------------------------------------
-local function getStartTarget()
-	local mapFolder = Workspace:FindFirstChild("Map")
-	if not mapFolder then return nil end
+LocalPlayer.Idled:Connect(function()
+	VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+	task.wait(1)
+	VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+end)
 
-	local startObj = mapFolder:FindFirstChild("Start")
-	if not startObj then return nil end
+--------------------------------------------------------------------------------
+-- Dynamic Configurations
+--------------------------------------------------------------------------------
+local Config = {
+	TweenSpeed = 1000,
+	WalkSpeed = 16,
+	JumpPower = 50,
+	AutoFarmEnabled = false
+}
 
-	if startObj:IsA("BasePart") then
-		return startObj
-	elseif startObj:IsA("Model") then
-		return startObj.PrimaryPart or startObj:FindFirstChildWhichIsA("BasePart")
+--------------------------------------------------------------------------------
+-- Helper Function: Auto Focus Camera
+--------------------------------------------------------------------------------
+local function setupViewportCamera(viewport, camera, model)
+	if not model then return end
+	
+	for _, oldChild in ipairs(viewport:GetChildren()) do
+		if oldChild:IsA("Model") or oldChild:IsA("BasePart") then
+			oldChild:Destroy()
+		end
 	end
 
-	return nil
+	local clone = model:Clone()
+	clone.Parent = viewport
+	
+	for _, desc in ipairs(clone:GetDescendants()) do
+		if desc:IsA("LuaSourceContainer") then
+			desc.Disabled = true
+		end
+	end
+
+	local cf, size
+	if clone:IsA("Model") then
+		cf, size = clone:GetBoundingBox()
+		if size.Magnitude == 0 then
+			local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart", true)
+			if primary then
+				cf = primary.CFrame
+				size = primary.Size
+			end
+		end
+	elseif clone:IsA("BasePart") then
+		cf = clone.CFrame
+		size = clone.Size
+	end
+
+	if not cf or not size then return clone end
+
+	local maxDim = math.max(size.X, size.Y, size.Z)
+	if maxDim == 0 then maxDim = 2 end
+	
+	local fovRad = math.rad(camera.FieldOfView / 2)
+	local distance = (maxDim / (2 * math.tan(fovRad))) * 1.45
+
+	local offset = Vector3.new(distance * 0.4, distance * 0.3, distance * 0.9)
+	camera.CFrame = CFrame.lookAt(cf.Position + offset, cf.Position)
+
+	return clone
 end
 
 --------------------------------------------------------------------------------
--- 2. ฟังก์ชันค้นหา Guardian ที่ใกล้ตัวเราที่สุดใน Workspace.Map.ClientGuards
+-- Helper Function: Trigger Prompt (Instant Hold = 0)
 --------------------------------------------------------------------------------
-local function getNearestGuardian()
-	local mapFolder = Workspace:FindFirstChild("Map")
-	local guardsFolder = mapFolder and mapFolder:FindFirstChild("ClientGuards") or Workspace:FindFirstChild("ClientGuards")
-	local character = LocalPlayer.Character
-	if not guardsFolder or not character then return nil end
+local function interactWithEgg(eggObj)
+	if not eggObj then return end
 
-	local myHRP = character:FindFirstChild("HumanoidRootPart")
-	if not myHRP then return nil end
-
-	local nearestGuardian = nil
-	local shortestDistance = math.huge
-
-	for _, guardian in ipairs(guardsFolder:GetChildren()) do
-		if guardian:IsA("Model") or guardian:IsA("BasePart") then
-			local gPart = guardian:IsA("Model") and (guardian.PrimaryPart or guardian:FindFirstChild("HumanoidRootPart") or guardian:FindFirstChildWhichIsA("BasePart")) or guardian
-			if gPart then
-				local dist = (myHRP.Position - gPart.Position).Magnitude
-				if dist < shortestDistance then
-					shortestDistance = dist
-					nearestGuardian = guardian
-				end
+	-- 1. ปรับ ProximityPrompt ให้ HoldDuration = 0 แล้วกดทันที
+	for _, prompt in ipairs(eggObj:GetDescendants()) do
+		if prompt:IsA("ProximityPrompt") then
+			prompt.HoldDuration = 0
+			if fireproximityprompt then
+				fireproximityprompt(prompt)
+			else
+				prompt:InputHoldBegin()
+				task.wait(0.02)
+				prompt:InputHoldEnd()
 			end
 		end
 	end
 
-	return nearestGuardian
+	-- 2. กดปุ่ม E สำรอง 1 ครั้ง
+	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+	task.wait(0.05)
+	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
 --------------------------------------------------------------------------------
--- 3. ระบบขี่ Guardian และ Tween ไปยัง Workspace.Map.Start (ความเร็ว 1000)
+-- 1. ฟังก์ชัน Auto Farm: ค้นหา Plot และ Teleport ไปยัง SquatZone.Floor
 --------------------------------------------------------------------------------
+local function findMyPlotAndTeleport()
+	local mapFolder = Workspace:FindFirstChild("Map")
+	local plotsFolder = mapFolder and mapFolder:FindFirstChild("Plots") or Workspace:FindFirstChild("Plots")
+	if not plotsFolder then return false end
+
+	local myName = LocalPlayer.Name
+	local myDisplayName = LocalPlayer.DisplayName
+
+	for _, plot in ipairs(plotsFolder:GetChildren()) do
+		for _, child in ipairs(plot:GetDescendants()) do
+			if child:IsA("StringValue") then
+				if child.Value == myName or child.Value == myDisplayName then
+					local squatZone = plot:FindFirstChild("SquatZone", true)
+					if squatZone then
+						local targetFloor = squatZone:FindFirstChild("Floor", true) or squatZone
+						local character = LocalPlayer.Character
+						if character and character:FindFirstChild("HumanoidRootPart") then
+							local targetCFrame = targetFloor:IsA("BasePart") and targetFloor.CFrame or targetFloor:GetPivot()
+							character:PivotTo(targetCFrame + Vector3.new(0, 3, 0))
+							return true
+						end
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+--------------------------------------------------------------------------------
+-- 2. ฟังก์ชันขี่ Guardian (ถอยระยะ 60 Studs & แช่แข็งตัวละคร)
+--------------------------------------------------------------------------------
+local function getStartTarget()
+	local mapFolder = Workspace:FindFirstChild("Map")
+	if not mapFolder then return nil end
+	local startObj = mapFolder:FindFirstChild("Start")
+	if not startObj then return nil end
+	return startObj:IsA("BasePart") and startObj or (startObj:IsA("Model") and (startObj.PrimaryPart or startObj:FindFirstChildWhichIsA("BasePart")))
+end
+
+local function getNearestGuardian()
+	local mapFolder = Workspace:FindFirstChild("Map")
+	local guardsFolder = mapFolder and mapFolder:FindFirstChild("ClientGuards") or Workspace:FindFirstChild("ClientGuards")
+	local character = LocalPlayer.Character
+	if not guardsFolder or not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
+
+	local myHRP = character.HumanoidRootPart
+	local nearestGuardian, shortestDistance = nil, math.huge
+
+	for _, guardian in ipairs(guardsFolder:GetChildren()) do
+		local gPart = guardian:IsA("Model") and (guardian.PrimaryPart or guardian:FindFirstChild("HumanoidRootPart") or guardian:FindFirstChildWhichIsA("BasePart")) or guardian
+		if gPart then
+			local dist = (myHRP.Position - gPart.Position).Magnitude
+			if dist < shortestDistance then
+				shortestDistance = dist
+				nearestGuardian = guardian
+			end
+		end
+	end
+	return nearestGuardian
+end
+
 local function rideAndTweenGuardianToStart()
+	local nearestGuardian = getNearestGuardian()
+	local startPart = getStartTarget()
+	local character = LocalPlayer.Character
+	if not nearestGuardian or not startPart or not character then return end
+
+	local myHRP = character:FindFirstChild("HumanoidRootPart")
+	local myHum = character:FindFirstChildOfClass("Humanoid")
+	local gPart = nearestGuardian:IsA("Model") and (nearestGuardian.PrimaryPart or nearestGuardian:FindFirstChild("HumanoidRootPart") or nearestGuardian:FindFirstChildWhichIsA("BasePart")) or nearestGuardian
+	local gHum = nearestGuardian:FindFirstChildOfClass("Humanoid")
+	
+	if not myHRP or not gPart then return end
+
+	-- แช่แข็ง Guardian (ยืนตัวตรง ไม่ขยับ)
+	if gHum then
+		gHum.PlatformStand = true
+		gHum.WalkSpeed = 0
+		gHum.JumpPower = 0
+	end
+
+	-- แช่แข็งผู้เล่น
+	if myHum then
+		myHum.PlatformStand = true
+	end
+
+	-- จัดแนว Guardian ให้ยืนตรงตั้งฉากกับพื้น
+	local currentGPos = gPart.Position
+	local uprightGCFrame = CFrame.lookAt(currentGPos, currentGPos + gPart.CFrame.LookVector * Vector3.new(1, 0, 1), Vector3.new(0, 1, 0))
+	
+	if nearestGuardian:IsA("Model") then nearestGuardian:PivotTo(uprightGCFrame) else gPart.CFrame = uprightGCFrame end
+	
+	-- ถอยระยะผู้เล่นออกไปด้านหลัง 60 Studs
+	local playerOffset = CFrame.new(0, 4, 60)
+	character:PivotTo(uprightGCFrame * playerOffset)
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = myHRP
+	weld.Part1 = gPart
+	weld.Parent = myHRP
+
+	local targetPos = startPart.Position + Vector3.new(0, 3, 0)
+	local targetCFrame = CFrame.lookAt(targetPos, targetPos + uprightGCFrame.LookVector, Vector3.new(0, 1, 0))
+	local tweenTime = math.max((gPart.Position - targetPos).Magnitude / Config.TweenSpeed, 0.05)
+
+	if nearestGuardian:IsA("Model") and not nearestGuardian.PrimaryPart then nearestGuardian.PrimaryPart = gPart end
+
+	local cframeValue = Instance.new("CFrameValue")
+	cframeValue.Value = nearestGuardian:IsA("Model") and nearestGuardian:GetPivot() or gPart.CFrame
+
+	local tween = TweenService:Create(cframeValue, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {Value = targetCFrame})
+	local connection = cframeValue.Changed:Connect(function(newCFrame)
+		if nearestGuardian:IsA("Model") then nearestGuardian:PivotTo(newCFrame) else gPart.CFrame = newCFrame end
+	end)
+
+	tween:Play()
+	tween.Completed:Wait()
+
+	connection:Disconnect()
+	cframeValue:Destroy()
+	task.wait(0.1)
+	
+	-- ปลดล็อคและคืนค่าผู้เล่น
+	weld:Destroy()
+	if myHum then
+		myHum.PlatformStand = false
+	end
+	
+	character:PivotTo(CFrame.lookAt(targetPos, targetPos + myHRP.CFrame.LookVector * Vector3.new(1, 0, 1), Vector3.new(0, 1, 0)))
+end
+
+--------------------------------------------------------------------------------
+-- 3. TP Tool
+--------------------------------------------------------------------------------
+local function giveTPTool()
+	local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+	if not backpack then return end
+
+	local tpTool = Instance.new("Tool")
+	tpTool.Name = "Click TP Tool"
+	tpTool.RequiresHandle = false
+	tpTool.Activated:Connect(function()
+		local mouse = LocalPlayer:GetMouse()
+		local character = LocalPlayer.Character
+		if mouse and character and character:FindFirstChild("HumanoidRootPart") then
+			character:PivotTo(CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0)))
+		end
+	end)
+	tpTool.Parent = backpack
+end
+
+--------------------------------------------------------------------------------
+-- 4. Main UI Setup
+--------------------------------------------------------------------------------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "FirandaHubPro"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 380, 0, 260)
+MainFrame.Position = UDim2.new(0.5, -190, 0.4, -130)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
+
+local MainUICorner = Instance.new("UICorner")
+MainUICorner.CornerRadius = UDim.new(0, 16)
+MainUICorner.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(45, 50, 65)
+MainStroke.Thickness = 1.5
+MainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+MainStroke.Parent = MainFrame
+
+-- Dragging System
+local dragging, dragInput, dragStart, startPos
+MainFrame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true dragStart = input.Position startPos = MainFrame.Position
+		input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+	end
+end)
+MainFrame.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		local delta = input.Position - dragStart
+		MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- 5. Side Navigation Bar
+--------------------------------------------------------------------------------
+local SideBar = Instance.new("Frame")
+SideBar.Size = UDim2.new(0, 46, 1, 0)
+SideBar.BackgroundColor3 = Color3.fromRGB(20, 23, 32)
+SideBar.Parent = MainFrame
+
+local SideBarCorner = Instance.new("UICorner")
+SideBarCorner.CornerRadius = UDim.new(0, 16)
+SideBarCorner.Parent = SideBar
+
+local function createTabBtn(icon, posOffset)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0, 32, 0, 32)
+	btn.Position = UDim2.new(0.5, -16, 0, posOffset)
+	btn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+	btn.Text = icon
+	btn.TextSize = 14
+	btn.Parent = SideBar
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = btn
+	return btn
+end
+
+local MainTabBtn = createTabBtn("🏠", 15)
+MainTabBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 60)
+local FarmTabBtn = createTabBtn("🏋️", 53)
+local SettingsTabBtn = createTabBtn("⚙️", 91)
+
+local ContentArea = Instance.new("Frame")
+ContentArea.Size = UDim2.new(1, -46, 1, 0)
+ContentArea.Position = UDim2.new(0, 46, 0, 0)
+ContentArea.BackgroundTransparency = 1
+ContentArea.Parent = MainFrame
+
+-- Header
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, 48)
+Header.BackgroundTransparency = 1
+Header.Parent = ContentArea
+
+local Title = Instance.new("TextLabel")
+Title.Text = "FIRANDA HUB"
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 15
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Position = UDim2.new(0, 14, 0, 10)
+Title.Size = UDim2.new(0, 150, 0, 16)
+Title.BackgroundTransparency = 1
+Title.Parent = Header
+
+local SubTitle = Instance.new("TextLabel")
+SubTitle.Text = "AUTO STEAL EGG"
+SubTitle.Font = Enum.Font.GothamMedium
+SubTitle.TextSize = 10
+SubTitle.TextColor3 = Color3.fromRGB(130, 140, 160)
+SubTitle.TextXAlignment = Enum.TextXAlignment.Left
+SubTitle.Position = UDim2.new(0, 14, 0, 26)
+SubTitle.Size = UDim2.new(0, 150, 0, 14)
+SubTitle.BackgroundTransparency = 1
+SubTitle.Parent = Header
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+CloseBtn.Position = UDim2.new(1, -34, 0, 11)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+CloseBtn.Text = "✕"
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextColor3 = Color3.fromRGB(150, 160, 180)
+CloseBtn.TextSize = 12
+CloseBtn.Parent = Header
+local CloseCorner = Instance.new("UICorner") CloseCorner.CornerRadius = UDim.new(0, 8) CloseCorner.Parent = CloseBtn
+
+--------------------------------------------------------------------------------
+-- 6. PAGE 1: MAIN FRAME (Auto Steal)
+--------------------------------------------------------------------------------
+local MainPage = Instance.new("Frame")
+MainPage.Size = UDim2.new(1, 0, 1, -48)
+MainPage.Position = UDim2.new(0, 0, 0, 48)
+MainPage.BackgroundTransparency = 1
+MainPage.Visible = true
+MainPage.Parent = ContentArea
+
+local Card = Instance.new("Frame")
+Card.Size = UDim2.new(1, -28, 0, 86)
+Card.Position = UDim2.new(0, 14, 0, 6)
+Card.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
+Card.Parent = MainPage
+local CardCorner = Instance.new("UICorner") CardCorner.CornerRadius = UDim.new(0, 12) CardCorner.Parent = Card
+
+local ViewportBg = Instance.new("Frame")
+ViewportBg.Size = UDim2.new(0, 68, 0, 68)
+ViewportBg.Position = UDim2.new(0, 9, 0, 9)
+ViewportBg.BackgroundColor3 = Color3.fromRGB(16, 18, 25)
+ViewportBg.Parent = Card
+local ViewportBgCorner = Instance.new("UICorner") ViewportBgCorner.CornerRadius = UDim.new(0, 10) ViewportBgCorner.Parent = ViewportBg
+
+local ViewportFrame = Instance.new("ViewportFrame")
+ViewportFrame.Size = UDim2.new(1, 0, 1, 0)
+ViewportFrame.BackgroundTransparency = 1
+ViewportFrame.Parent = ViewportBg
+
+local ViewportCamera = Instance.new("Camera")
+ViewportCamera.FieldOfView = 50
+ViewportFrame.CurrentCamera = ViewportCamera
+ViewportCamera.Parent = ViewportFrame
+
+local DropdownBtn = Instance.new("TextButton")
+DropdownBtn.Size = UDim2.new(1, -95, 0, 68)
+DropdownBtn.Position = UDim2.new(0, 86, 0, 9)
+DropdownBtn.BackgroundTransparency = 1
+DropdownBtn.Text = ""
+DropdownBtn.Parent = Card
+
+local DropdownTag = Instance.new("TextLabel")
+DropdownTag.Text = "SELECT EGG"
+DropdownTag.Font = Enum.Font.GothamBold
+DropdownTag.TextSize = 9
+DropdownTag.TextColor3 = Color3.fromRGB(100, 110, 130)
+DropdownTag.TextXAlignment = Enum.TextXAlignment.Left
+DropdownTag.Position = UDim2.new(0, 0, 0, 14)
+DropdownTag.Size = UDim2.new(1, -30, 0, 12)
+DropdownTag.BackgroundTransparency = 1
+DropdownTag.Parent = DropdownBtn
+
+local SelectedText = Instance.new("TextLabel")
+SelectedText.Text = "Choose target egg..."
+SelectedText.Font = Enum.Font.GothamBold
+SelectedText.TextSize = 13
+SelectedText.TextColor3 = Color3.fromRGB(255, 255, 255)
+SelectedText.TextXAlignment = Enum.TextXAlignment.Left
+SelectedText.Position = UDim2.new(0, 0, 0, 30)
+SelectedText.Size = UDim2.new(1, -30, 0, 20)
+SelectedText.BackgroundTransparency = 1
+SelectedText.Parent = DropdownBtn
+
+local Arrow = Instance.new("TextLabel")
+Arrow.Text = "▼"
+Arrow.Font = Enum.Font.GothamBold
+Arrow.TextSize = 10
+Arrow.TextColor3 = Color3.fromRGB(140, 150, 170)
+Arrow.Position = UDim2.new(1, -20, 0, 26)
+Arrow.Size = UDim2.new(0, 16, 0, 16)
+Arrow.BackgroundTransparency = 1
+Arrow.Parent = DropdownBtn
+
+local DropdownContainer = Instance.new("Frame")
+DropdownContainer.Size = UDim2.new(1, 0, 0, 150)
+DropdownContainer.Position = UDim2.new(0, 0, 1, 6)
+DropdownContainer.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
+DropdownContainer.BorderSizePixel = 0
+DropdownContainer.Visible = false
+DropdownContainer.ZIndex = 20
+DropdownContainer.Parent = Card
+local DropdownContainerCorner = Instance.new("UICorner") DropdownContainerCorner.CornerRadius = UDim.new(0, 10) DropdownContainerCorner.Parent = DropdownContainer
+
+local SearchFrame = Instance.new("Frame")
+SearchFrame.Size = UDim2.new(1, -12, 0, 28)
+SearchFrame.Position = UDim2.new(0, 6, 0, 6)
+SearchFrame.BackgroundColor3 = Color3.fromRGB(16, 18, 25)
+SearchFrame.ZIndex = 21
+SearchFrame.Parent = DropdownContainer
+local SearchCorner = Instance.new("UICorner") SearchCorner.CornerRadius = UDim.new(0, 6) SearchCorner.Parent = SearchFrame
+
+local SearchInput = Instance.new("TextBox")
+SearchInput.Size = UDim2.new(1, -16, 1, 0)
+SearchInput.Position = UDim2.new(0, 8, 0, 0)
+SearchInput.BackgroundTransparency = 1
+SearchInput.PlaceholderText = "Search egg or stage..."
+SearchInput.PlaceholderColor3 = Color3.fromRGB(100, 110, 130)
+SearchInput.Text = ""
+SearchInput.Font = Enum.Font.Gotham
+SearchInput.TextSize = 11
+SearchInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+SearchInput.TextXAlignment = Enum.TextXAlignment.Left
+SearchInput.ZIndex = 22
+SearchInput.ClearTextOnFocus = false
+SearchInput.Parent = SearchFrame
+
+local DropdownList = Instance.new("ScrollingFrame")
+DropdownList.Size = UDim2.new(1, 0, 1, -40)
+DropdownList.Position = UDim2.new(0, 0, 0, 40)
+DropdownList.BackgroundTransparency = 1
+DropdownList.BorderSizePixel = 0
+DropdownList.ZIndex = 21
+DropdownList.ScrollBarThickness = 3
+DropdownList.ScrollBarImageColor3 = Color3.fromRGB(60, 70, 90)
+DropdownList.Parent = DropdownContainer
+local UIListLayout = Instance.new("UIListLayout") UIListLayout.Padding = UDim.new(0, 4) UIListLayout.Parent = DropdownList
+
+-- Toggle Main Steal
+local ToggleFrame = Instance.new("Frame")
+ToggleFrame.Size = UDim2.new(1, -28, 0, 54)
+ToggleFrame.Position = UDim2.new(0, 14, 0, 106)
+ToggleFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
+ToggleFrame.Parent = MainPage
+local ToggleCorner = Instance.new("UICorner") ToggleCorner.CornerRadius = UDim.new(0, 12) ToggleCorner.Parent = ToggleFrame
+
+local ToggleTitle = Instance.new("TextLabel")
+ToggleTitle.Text = "AUTO STEAL EGG"
+ToggleTitle.Font = Enum.Font.GothamBold
+ToggleTitle.TextSize = 12
+ToggleTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleTitle.TextXAlignment = Enum.TextXAlignment.Left
+ToggleTitle.Position = UDim2.new(0, 14, 0, 10)
+ToggleTitle.Size = UDim2.new(0, 180, 0, 16)
+ToggleTitle.BackgroundTransparency = 1
+ToggleTitle.Parent = ToggleFrame
+
+local SwitchBg = Instance.new("Frame")
+SwitchBg.Size = UDim2.new(0, 50, 0, 26)
+SwitchBg.Position = UDim2.new(1, -64, 0, 14)
+SwitchBg.BackgroundColor3 = Color3.fromRGB(35, 40, 52)
+SwitchBg.Parent = ToggleFrame
+local SwitchCorner = Instance.new("UICorner") SwitchCorner.CornerRadius = UDim.new(1, 0) SwitchCorner.Parent = SwitchBg
+
+local SwitchKnob = Instance.new("Frame")
+SwitchKnob.Size = UDim2.new(0, 20, 0, 20)
+SwitchKnob.Position = UDim2.new(0, 3, 0.5, -10)
+SwitchKnob.BackgroundColor3 = Color3.fromRGB(180, 190, 210)
+SwitchKnob.Parent = SwitchBg
+local KnobCorner = Instance.new("UICorner") KnobCorner.CornerRadius = UDim.new(1, 0) KnobCorner.Parent = SwitchKnob
+
+local SwitchBtn = Instance.new("TextButton")
+SwitchBtn.Size = UDim2.new(1, 0, 1, 0)
+SwitchBtn.BackgroundTransparency = 1
+SwitchBtn.Text = ""
+SwitchBtn.Parent = SwitchBg
+
+--------------------------------------------------------------------------------
+-- 7. PAGE 2: AUTO FARM PAGE
+--------------------------------------------------------------------------------
+local FarmPage = Instance.new("Frame")
+FarmPage.Name = "FarmPage"
+FarmPage.Size = UDim2.new(1, 0, 1, -48)
+FarmPage.Position = UDim2.new(0, 0, 0, 48)
+FarmPage.BackgroundTransparency = 1
+FarmPage.Visible = false
+FarmPage.Parent = ContentArea
+
+local FarmToggleFrame = Instance.new("Frame")
+FarmToggleFrame.Size = UDim2.new(1, -28, 0, 60)
+FarmToggleFrame.Position = UDim2.new(0, 14, 0, 10)
+FarmToggleFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
+FarmToggleFrame.Parent = FarmPage
+local FarmToggleCorner = Instance.new("UICorner") FarmToggleCorner.CornerRadius = UDim.new(0, 12) FarmToggleCorner.Parent = FarmToggleFrame
+
+local FarmTitle = Instance.new("TextLabel")
+FarmTitle.Text = "AUTO SQUAT FARM"
+FarmTitle.Font = Enum.Font.GothamBold
+FarmTitle.TextSize = 12
+FarmTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+FarmTitle.TextXAlignment = Enum.TextXAlignment.Left
+FarmTitle.Position = UDim2.new(0, 14, 0, 12)
+FarmTitle.Size = UDim2.new(0, 180, 0, 16)
+FarmTitle.BackgroundTransparency = 1
+FarmTitle.Parent = FarmToggleFrame
+
+local FarmSubText = Instance.new("TextLabel")
+FarmSubText.Text = "Auto Farm Jump Power"
+FarmSubText.Font = Enum.Font.Gotham
+FarmSubText.TextSize = 9
+FarmSubText.TextColor3 = Color3.fromRGB(110, 120, 140)
+FarmSubText.TextXAlignment = Enum.TextXAlignment.Left
+FarmSubText.Position = UDim2.new(0, 14, 0, 30)
+FarmSubText.Size = UDim2.new(0, 180, 0, 14)
+FarmSubText.BackgroundTransparency = 1
+FarmSubText.Parent = FarmToggleFrame
+
+local FarmSwitchBg = Instance.new("Frame")
+FarmSwitchBg.Size = UDim2.new(0, 50, 0, 26)
+FarmSwitchBg.Position = UDim2.new(1, -64, 0, 17)
+FarmSwitchBg.BackgroundColor3 = Color3.fromRGB(35, 40, 52)
+FarmSwitchBg.Parent = FarmToggleFrame
+local FarmSwitchCorner = Instance.new("UICorner") FarmSwitchCorner.CornerRadius = UDim.new(1, 0) FarmSwitchCorner.Parent = FarmSwitchBg
+
+local FarmSwitchKnob = Instance.new("Frame")
+FarmSwitchKnob.Size = UDim2.new(0, 20, 0, 20)
+FarmSwitchKnob.Position = UDim2.new(0, 3, 0.5, -10)
+FarmSwitchKnob.BackgroundColor3 = Color3.fromRGB(180, 190, 210)
+FarmSwitchKnob.Parent = FarmSwitchBg
+local FarmKnobCorner = Instance.new("UICorner") FarmKnobCorner.CornerRadius = UDim.new(1, 0) FarmKnobCorner.Parent = FarmSwitchKnob
+
+local FarmSwitchBtn = Instance.new("TextButton")
+FarmSwitchBtn.Size = UDim2.new(1, 0, 1, 0)
+FarmSwitchBtn.BackgroundTransparency = 1
+FarmSwitchBtn.Text = ""
+FarmSwitchBtn.Parent = FarmSwitchBg
+
+local ManualTPBtnFrame = Instance.new("Frame")
+ManualTPBtnFrame.Size = UDim2.new(1, -28, 0, 42)
+ManualTPBtnFrame.Position = UDim2.new(0, 14, 0, 80)
+ManualTPBtnFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
+ManualTPBtnFrame.Parent = FarmPage
+local ManualTPBtnCorner = Instance.new("UICorner") ManualTPBtnCorner.CornerRadius = UDim.new(0, 10) ManualTPBtnCorner.Parent = ManualTPBtnFrame
+
+local ManualTPBtn = Instance.new("TextButton")
+ManualTPBtn.Size = UDim2.new(1, 0, 1, 0)
+ManualTPBtn.BackgroundTransparency = 1
+ManualTPBtn.Text = "Teleport to Plots"
+ManualTPBtn.Font = Enum.Font.GothamBold
+ManualTPBtn.TextColor3 = Color3.fromRGB(16, 185, 129)
+ManualTPBtn.TextSize = 12
+ManualTPBtn.Parent = ManualTPBtnFrame
+
+ManualTPBtn.MouseButton1Click:Connect(function()
+	local success = findMyPlotAndTeleport()
+	ManualTPBtn.Text = success and "Teleported!" or "Plot Not Found! ✕"
+	task.wait(1.5)
+	ManualTPBtn.Text = "Teleport to Plots"
+end)
+
+--------------------------------------------------------------------------------
+-- 8. PAGE 3: SETTINGS PAGE
+--------------------------------------------------------------------------------
+local SettingsPage = Instance.new("ScrollingFrame")
+SettingsPage.Name = "SettingsPage"
+SettingsPage.Size = UDim2.new(1, 0, 1, -48)
+SettingsPage.Position = UDim2.new(0, 0, 0, 48)
+SettingsPage.BackgroundTransparency = 1
+SettingsPage.Visible = false
+SettingsPage.BorderSizePixel = 0
+SettingsPage.ScrollBarThickness = 3
+SettingsPage.ScrollBarImageColor3 = Color3.fromRGB(60, 70, 90)
+SettingsPage.Parent = ContentArea
+
+local SettingsLayout = Instance.new("UIListLayout")
+SettingsLayout.Padding = UDim.new(0, 8)
+SettingsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+SettingsLayout.Parent = SettingsPage
+
+local function createSettingInput(titleText, defaultVal, callback)
+	local setFrame = Instance.new("Frame")
+	setFrame.Size = UDim2.new(1, -28, 0, 42)
+	setFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
+	setFrame.Parent = SettingsPage
+
+	local setCorner = Instance.new("UICorner") setCorner.CornerRadius = UDim.new(0, 10) setCorner.Parent = setFrame
+
+	local label = Instance.new("TextLabel")
+	label.Text = titleText
+	label.Font = Enum.Font.GothamMedium
+	label.TextSize = 11
+	label.TextColor3 = Color3.fromRGB(200, 210, 230)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Position = UDim2.new(0, 12, 0, 0)
+	label.Size = UDim2.new(0.6, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Parent = setFrame
+
+	local inputBg = Instance.new("Frame")
+	inputBg.Size = UDim2.new(0, 70, 0, 26)
+	inputBg.Position = UDim2.new(1, -82, 0.5, -13)
+	inputBg.BackgroundColor3 = Color3.fromRGB(16, 18, 25)
+	inputBg.Parent = setFrame
+
+	local inputCorner = Instance.new("UICorner") inputCorner.CornerRadius = UDim.new(0, 6) inputCorner.Parent = inputBg
+
+	local textBox = Instance.new("TextBox")
+	textBox.Size = UDim2.new(1, 0, 1, 0)
+	textBox.BackgroundTransparency = 1
+	textBox.Text = tostring(defaultVal)
+	textBox.Font = Enum.Font.GothamBold
+	textBox.TextSize = 11
+	textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textBox.Parent = inputBg
+
+	textBox.FocusLost:Connect(function()
+		local num = tonumber(textBox.Text)
+		if num then callback(num) else textBox.Text = tostring(defaultVal) end
+	end)
+end
+
+createSettingInput("WalkSpeed", Config.WalkSpeed, function(val) Config.WalkSpeed = val end)
+createSettingInput("JumpPower", Config.JumpPower, function(val) Config.JumpPower = val end)
+createSettingInput("Tween Speed", Config.TweenSpeed, function(val) Config.TweenSpeed = val end)
+
+local TPBtnFrame = Instance.new("Frame")
+TPBtnFrame.Size = UDim2.new(1, -28, 0, 42)
+TPBtnFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 35)
+TPBtnFrame.Parent = SettingsPage
+local TPBtnCorner = Instance.new("UICorner") TPBtnCorner.CornerRadius = UDim.new(0, 10) TPBtnCorner.Parent = TPBtnFrame
+
+local TPBtn = Instance.new("TextButton")
+TPBtn.Size = UDim2.new(1, 0, 1, 0)
+TPBtn.BackgroundTransparency = 1
+TPBtn.Text = "Get Teleport Tool"
+TPBtn.Font = Enum.Font.GothamBold
+TPBtn.TextColor3 = Color3.fromRGB(99, 102, 241)
+TPBtn.TextSize = 12
+TPBtn.Parent = TPBtnFrame
+
+TPBtn.MouseButton1Click:Connect(function()
+	giveTPTool()
+	TPBtn.Text = "Tool Give"
+	task.wait(1)
+	TPBtn.Text = "Get Teleport Tool"
+end)
+
+SettingsPage.CanvasSize = UDim2.new(0, 0, 0, 210)
+
+--------------------------------------------------------------------------------
+-- 9. Navigation & Page Switching
+--------------------------------------------------------------------------------
+local function resetTabColors()
+	MainTabBtn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+	FarmTabBtn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+	SettingsTabBtn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+	MainPage.Visible = false
+	FarmPage.Visible = false
+	SettingsPage.Visible = false
+end
+
+MainTabBtn.MouseButton1Click:Connect(function()
+	resetTabColors()
+	MainPage.Visible = true
+	SubTitle.Text = "AUTO STEAL EGG"
+	MainTabBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 60)
+end)
+
+FarmTabBtn.MouseButton1Click:Connect(function()
+	resetTabColors()
+	FarmPage.Visible = true
+	SubTitle.Text = "AUTO SQUAT FARM"
+	FarmTabBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 60)
+end)
+
+SettingsTabBtn.MouseButton1Click:Connect(function()
+	resetTabColors()
+	SettingsPage.Visible = true
+	SubTitle.Text = "HUB SETTINGS"
+	SettingsTabBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 60)
+end)
+
+RunService.Stepped:Connect(function()
+	local character = LocalPlayer.Character
+	if character and character:FindFirstChild("Humanoid") then
+		local hum = character.Humanoid
+		if Config.WalkSpeed ~= 16 and not hum.PlatformStand then hum.WalkSpeed = Config.WalkSpeed end
+		if Config.JumpPower ~= 50 and not hum.PlatformStand then 
+			hum.UseJumpPower = true
+			hum.JumpPower = Config.JumpPower 
+		end
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- 10. Open/Close UI Window
+--------------------------------------------------------------------------------
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Size = UDim2.new(0, 95, 0, 34)
+OpenBtn.Position = UDim2.new(0, 20, 0.5, -17)
+OpenBtn.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
+OpenBtn.Text = "Firanda Hub"
+OpenBtn.Font = Enum.Font.GothamBold
+OpenBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+OpenBtn.TextSize = 12
+OpenBtn.Parent = ScreenGui
+local OpenCorner = Instance.new("UICorner") OpenCorner.CornerRadius = UDim.new(0, 10) OpenCorner.Parent = OpenBtn
+
+local function toggleUIWindow(show)
+	if show then
+		MainFrame.Visible = true
+		MainFrame.Size = UDim2.new(0, 320, 0, 220)
+		TweenService:Create(MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Size = UDim2.new(0, 380, 0, 260)
+		}):Play()
+	else
+		local tween = TweenService:Create(MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Size = UDim2.new(0, 320, 0, 220)
+		})
+		tween:Play()
+		tween.Completed:Connect(function()
+			if not MainFrame.Visible then return end
+			MainFrame.Visible = false
+			MainFrame.Size = UDim2.new(0, 380, 0, 260)
+		end)
+	end
+end
+
+OpenBtn.MouseButton1Click:Connect(function() toggleUIWindow(not MainFrame.Visible) end)
+CloseBtn.MouseButton1Click:Connect(function() toggleUIWindow(false) end)
+
+--------------------------------------------------------------------------------
+-- 11. Dropdown & Viewport Render Logic (Unique Eggs Only)
+--------------------------------------------------------------------------------
+local selectedTargetName, currentViewportModel = nil, nil
+
+local function setViewportModel(model)
+	currentViewportModel = setupViewportCamera(ViewportFrame, ViewportCamera, model)
+end
+
+local function refreshEggsFromStages(filterText)
+	filterText = filterText and filterText:lower() or ""
+	
+	for _, child in ipairs(DropdownList:GetChildren()) do 
+		if child:IsA("TextButton") then child:Destroy() end 
+	end
+
+	local mapFolder = Workspace:FindFirstChild("Map")
+	local stagesFolder = mapFolder and mapFolder:FindFirstChild("Stages") or Workspace:FindFirstChild("Stages")
+	if not stagesFolder then return end
+
+	local seenEggNames = {}
+	local count = 0
+
+	for _, stage in ipairs(stagesFolder:GetChildren()) do
+		local spawnedEggsFolder = stage:FindFirstChild("SpawnedEggs")
+		if spawnedEggsFolder then
+			for _, egg in ipairs(spawnedEggsFolder:GetChildren()) do
+				local fullTitle = stage.Name .. " - " .. egg.Name
+				
+				if not seenEggNames[fullTitle] then
+					if filterText == "" or fullTitle:lower():find(filterText, 1, true) then
+						seenEggNames[fullTitle] = true
+						count = count + 1
+						
+						local itemBtn = Instance.new("TextButton")
+						itemBtn.Size = UDim2.new(1, -12, 0, 34)
+						itemBtn.BackgroundColor3 = Color3.fromRGB(28, 32, 45)
+						itemBtn.BackgroundTransparency = 0.3
+						itemBtn.Text = ""
+						itemBtn.ZIndex = 22
+						itemBtn.Parent = DropdownList
+						
+						local itemCorner = Instance.new("UICorner") 
+						itemCorner.CornerRadius = UDim.new(0, 6) 
+						itemCorner.Parent = itemBtn
+
+						local miniViewportBg = Instance.new("Frame")
+						miniViewportBg.Size = UDim2.new(0, 26, 0, 26)
+						miniViewportBg.Position = UDim2.new(0, 4, 0.5, -13)
+						miniViewportBg.BackgroundColor3 = Color3.fromRGB(16, 18, 25)
+						miniViewportBg.ZIndex = 23
+						miniViewportBg.Parent = itemBtn
+						local miniBgCorner = Instance.new("UICorner") miniBgCorner.CornerRadius = UDim.new(0, 4) miniBgCorner.Parent = miniViewportBg
+
+						local miniViewport = Instance.new("ViewportFrame")
+						miniViewport.Size = UDim2.new(1, 0, 1, 0)
+						miniViewport.BackgroundTransparency = 1
+						miniViewport.ZIndex = 24
+						miniViewport.Parent = miniViewportBg
+
+						local miniCamera = Instance.new("Camera")
+						miniCamera.FieldOfView = 50
+						miniViewport.CurrentCamera = miniCamera
+						miniCamera.Parent = miniViewport
+
+						setupViewportCamera(miniViewport, miniCamera, egg)
+
+						local itemLabel = Instance.new("TextLabel")
+						itemLabel.Text = fullTitle
+						itemLabel.Font = Enum.Font.GothamMedium
+						itemLabel.TextColor3 = Color3.fromRGB(210, 220, 240)
+						itemLabel.TextSize = 11
+						itemLabel.TextXAlignment = Enum.TextXAlignment.Left
+						itemLabel.Position = UDim2.new(0, 36, 0, 0)
+						itemLabel.Size = UDim2.new(1, -40, 1, 0)
+						itemLabel.BackgroundTransparency = 1
+						itemLabel.ZIndex = 23
+						itemLabel.Parent = itemBtn
+
+						itemBtn.MouseButton1Click:Connect(function()
+							selectedTargetName = egg.Name
+							SelectedText.Text = egg.Name
+							setViewportModel(egg)
+							DropdownContainer.Visible = false
+							Arrow.Text = "▼"
+						end)
+					end
+				end
+			end
+		end
+	end
+	DropdownList.CanvasSize = UDim2.new(0, 0, 0, count * 38)
+end
+
+SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
+	if DropdownContainer.Visible then refreshEggsFromStages(SearchInput.Text) end
+end)
+
+DropdownBtn.MouseButton1Click:Connect(function()
+	DropdownContainer.Visible = not DropdownContainer.Visible
+	Arrow.Text = DropdownContainer.Visible and "▲" or "▼"
+	if DropdownContainer.Visible then SearchInput.Text = "" refreshEggsFromStages("") end
+end)
+
+--------------------------------------------------------------------------------
+-- Helper: ค้นหาไข่ที่มีชื่อตรงกับที่เลือก
+--------------------------------------------------------------------------------
+local function findEggByName(name)
+	local mapFolder = Workspace:FindFirstChild("Map")
+	local stagesFolder = mapFolder and mapFolder:FindFirstChild("Stages") or Workspace:FindFirstChild("Stages")
+	if not stagesFolder then return nil end
+
+	for _, stage in ipairs(stagesFolder:GetChildren()) do
+		local spawnedEggsFolder = stage:FindFirstChild("SpawnedEggs")
+		if spawnedEggsFolder then
+			local egg = spawnedEggsFolder:FindFirstChild(name)
+			if egg then return egg end
+		end
+	end
+	return nil
+end
+
+--------------------------------------------------------------------------------
+-- 12. Auto Steal & Auto Farm Logic Thread
+--------------------------------------------------------------------------------
+local isStealActive = false
+
+-- Auto Steal Switch
+SwitchBtn.MouseButton1Click:Connect(function()
+	isStealActive = not isStealActive
+	if isStealActive then
+		TweenService:Create(SwitchBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(16, 185, 129)}):Play()
+		TweenService:Create(SwitchKnob, TweenInfo.new(0.2), {Position = UDim2.new(1, -23, 0.5, -10), BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+		task.spawn(function()
+			while isStealActive do
+				if selectedTargetName then
+					local targetEgg = findEggByName(selectedTargetName)
+					if targetEgg and targetEgg.Parent then
+						local character = LocalPlayer.Character
+						if character then
+							local targetPart = targetEgg:IsA("Model") and (targetEgg.PrimaryPart or targetEgg:FindFirstChildWhichIsA("BasePart")) or targetEgg
+							if targetPart then
+								-- Teleport ไปยังไข่
+								character:PivotTo(CFrame.lookAt(targetPart.Position + Vector3.new(0, 2, 3), targetPart.Position, Vector3.new(0, 1, 0)))
+								task.wait(0.15)
+								
+								-- กด Prompt (Instant Hold = 0)
+								interactWithEgg(targetEgg)
+								
+								task.wait(0.2)
+								rideAndTweenGuardianToStart()
+							end
+						end
+					end
+				end
+				task.wait(1.2)
+			end
+		end)
+	else
+		TweenService:Create(SwitchBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 40, 52)}):Play()
+		TweenService:Create(SwitchKnob, TweenInfo.new(0.2), {Position = UDim2.new(0, 3, 0.5, -10), BackgroundColor3 = Color3.fromRGB(180, 190, 210)}):Play()
+	end
+end)
+
+-- Auto Farm Switch & Smooth Detector Auto-Clicker
+FarmSwitchBtn.MouseButton1Click:Connect(function()
+	Config.AutoFarmEnabled = not Config.AutoFarmEnabled
+	if Config.AutoFarmEnabled then
+		TweenService:Create(FarmSwitchBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(16, 185, 129)}):Play()
+		TweenService:Create(FarmSwitchKnob, TweenInfo.new(0.2), {Position = UDim2.new(1, -23, 0.5, -10), BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+		findMyPlotAndTeleport()
+	else
+		TweenService:Create(FarmSwitchBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 40, 52)}):Play()
+		TweenService:Create(FarmSwitchKnob, TweenInfo.new(0.2), {Position = UDim2.new(0, 3, 0.5, -10), BackgroundColor3 = Color3.fromRGB(180, 190, 210)}):Play()
+	end
+end)
+
+-- Fast Detector Clicker
+RunService.RenderStepped:Connect(function()
+	if Config.AutoFarmEnabled then
+		local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+		if playerGui then
+			local squatBonus = playerGui:FindFirstChild("UI") and playerGui.UI:FindFirstChild("SquatBonus")
+			if squatBonus and squatBonus:FindFirstChild("Main") then
+				local detector = squatBonus.Main:FindFirstChild("Detector")
+				if detector and detector.Visible then
+					if detector:IsA("GuiButton") then
+						for _, conn in ipairs(getconnections(detector.MouseButton1Click)) do
+							conn:Fire()
+						end
+						for _, conn in ipairs(getconnections(detector.Activated)) do
+							conn:Fire()
+						end
+					end
+				end
+			end
+		end
+	end
+end)
 	local nearestGuardian = getNearestGuardian()
 	local startPart = getStartTarget()
 	local character = LocalPlayer.Character
